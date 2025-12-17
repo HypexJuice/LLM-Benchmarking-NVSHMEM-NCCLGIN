@@ -1,0 +1,9 @@
+[
+    {
+        "backend": "nvshmem",
+        "time_sec": 1227.749,
+        "log_file": "benchmark_nvshmem_2.log",
+        "avg_tokens_per_sec": 0.0,
+        "num_steps": 204
+    }
+]

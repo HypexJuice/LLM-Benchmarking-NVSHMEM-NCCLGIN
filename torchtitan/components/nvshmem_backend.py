@@ -3,10 +3,15 @@ import torch
 import torch.distributed as dist
 from typing import Optional
 import threading
+import os
 
 # Use PyTorch symmetric memory API (preferred)
 import torch.distributed._symmetric_memory as symm_mem
 # Optionally import low-level nvshmem python package at runtime if you need it.
+
+# This will be set by train.py depending on job_config.model.use_nvshmem
+NVSHMEM_ENABLED_BY_CONFIG = False
+
 _nvshmem_python = None
 
 # module-level state
@@ -28,6 +33,16 @@ def _current_symm_backend() -> str:
 
 def is_nvshmem_active_runtime() -> bool:
     """Quick check whether NVSHMEM looks active (PyTorch side)."""
+    # try:
+    #     if not symm_mem.is_nvshmem_available():
+    #         return False
+    #     backend = _current_symm_backend()
+    #     return "nvshmem" in backend
+    # except Exception:
+    #     return False
+
+    if not NVSHMEM_ENABLED_BY_CONFIG:
+        return False
     try:
         if not symm_mem.is_nvshmem_available():
             return False
@@ -35,6 +50,28 @@ def is_nvshmem_active_runtime() -> bool:
         return "nvshmem" in backend
     except Exception:
         return False
+
+
+def initialize_nvshmem(rank: int, world_size: int) -> bool:
+    """
+    Initialize NVSHMEM backend before initializing torch.distributed.
+    """
+    print(">>> [NVSHMEM] Initializing NVSHMEM backend")
+
+    # Initialize NVSHMEM runtime
+    out = init_nvshmem(rank, world_size)
+
+    # # Set Torch distributed environment to SHMEM
+    # os.environ["TORCH_DISTRIBUTED_DEFAULT_COMM"] = "shmem"
+    # os.environ["NCCL_SHM_DISABLE"] = "0"
+    # os.environ["NCCL_P2P_DISABLE"] = "1"
+
+    # # Torch init process group (SHMEM backend)
+    # if not dist.is_initialized():
+    #     dist.init_process_group(backend="shmem")
+
+    print(">>> [NVSHMEM] NVSHMEM + SHMEM backend initialized")
+    return out
 
 class NVSHMEMContext:
     """Context holder for NVSHMEM runtime state (idempotent)."""
@@ -50,15 +87,28 @@ class NVSHMEMContext:
         This function is idempotent and safe to call after dist.init_process_group.
         Returns True on success (or if already initialized).
         """
+        # global _nvshmem_python
+        # with _nvshmem_lock:
+        #     if self.initialized:
+        #         return True
+
+        #     # Primary check: PyTorch symmetric memory must be compiled & backend selected.
+        #     if not symm_mem.is_nvshmem_available():
+        #         return False
+
+        #     backend = _current_symm_backend()
+        #     if "nvshmem" not in backend:
+        #         # Backend was not set to NVSHMEM yet.
+        #         return False
         global _nvshmem_python
         with _nvshmem_lock:
             if self.initialized:
                 return True
-
+            if not NVSHMEM_ENABLED_BY_CONFIG:
+                return False
             # Primary check: PyTorch symmetric memory must be compiled & backend selected.
             if not symm_mem.is_nvshmem_available():
                 return False
-
             backend = _current_symm_backend()
             if "nvshmem" not in backend:
                 # Backend was not set to NVSHMEM yet.
@@ -128,10 +178,24 @@ class NVSHMEMAllToAll:
         input: torch.Tensor,
         expert_group: Optional[dist.ProcessGroup] = None,
     ) -> torch.Tensor:
+        # if not self.ctx.initialized or not is_nvshmem_active_runtime():
+        #     return self._nccl_all_to_all(output, input, expert_group)
+        # # Prefer using torch.ops.symm_mem.* primitives (these are the same kernels you tested).
+        # return self._symm_mem_all_to_all(output, input, expert_group)
+        start = time.time()
+
         if not self.ctx.initialized or not is_nvshmem_active_runtime():
-            return self._nccl_all_to_all(output, input, expert_group)
-        # Prefer using torch.ops.symm_mem.* primitives (these are the same kernels you tested).
-        return self._symm_mem_all_to_all(output, input, expert_group)
+            out = self._nccl_all_to_all(output, input, expert_group)
+            backend = "nccl"
+        else:
+            out = self._symm_mem_all_to_all(output, input, expert_group)
+            backend = "nvshmem"
+
+        duration = time.time() - start
+        if dist.get_rank() == 0:
+            print(f"[A2A][{backend}] time={duration*1000:.3f} ms")
+
+        return out
 
     def _symm_mem_all_to_all(
         self,

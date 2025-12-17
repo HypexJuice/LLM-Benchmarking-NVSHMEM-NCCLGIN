@@ -12,7 +12,27 @@ from typing import Any, Generator, Iterable
 
 import torch
 import torch.distributed._symmetric_memory as symm_mem
-symm_mem.set_backend("NVSHMEM")
+# symm_mem.set_backend("NVSHMEM")
+# USE_NVSHMEM = os.environ.get("TT_USE_NVSHMEM", "0") == "1"
+# if USE_NVSHMEM:
+#     # Only select the NVSHMEM symmetric backend when explicitly requested.
+#     symm_mem.set_backend("NVSHMEM")
+#     assert symm_mem.is_nvshmem_available(), (
+#         "TT_USE_NVSHMEM=1 but NVSHMEM symmetric backend is not available."
+#     )
+# else:
+#     symm_mem.set_backend("CUDA")
+
+
+COMM_BACKEND = os.getenv("COMM_BACKEND", "nccl")
+print(">>> COMM_BACKEND =", COMM_BACKEND)
+
+if COMM_BACKEND == "nvshmem":
+    symm_mem.set_backend("NVSHMEM")
+    print(">>> Set symmetric memory backend to NVSHMEM")
+else:
+    print(">>> Using NCCL (default) backend")
+
 import torchtitan
 from torch.distributed.elastic.multiprocessing.errors import record
 import torch.distributed as dist
@@ -36,16 +56,7 @@ from torchtitan.tools.profiling import (
     maybe_enable_profiling,
 )
 
-from torchtitan.components.nvshmem_backend import init_nvshmem, finalize_nvshmem
-
-
-# Set NVSHMEM as the backend for symmetric memory operations
-# symm_mem.set_backend("NVSHMEM")
-
-assert symm_mem.is_nvshmem_available(), "NVSHMEM detected in PyTorch build but not enabled."
-
-# 2. Initialize PyTorch process group
-# dist.init_process_group(backend="nccl")
+from torchtitan.components.nvshmem_backend import init_nvshmem, finalize_nvshmem, initialize_nvshmem
 
 
 class Trainer(torch.distributed.checkpoint.stateful.Stateful):
@@ -107,19 +118,21 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         # init distributed and build meshes
         self.parallel_dims = parallel_dims = self.init_distributed()
 
-        # Initialize NVSHMEM after distributed init if MoE with NVSHMEM is enabled
-        if hasattr(job_config.model, 'use_moe') and job_config.model.use_moe:
-            if hasattr(job_config.model, 'use_nvshmem') and job_config.model.use_nvshmem:
-                self.nvshmem_initialized = init_nvshmem(
-                    rank=torch.distributed.get_rank(),
-                    world_size=torch.distributed.get_world_size()
+        if COMM_BACKEND == "nvshmem":
+            print(">>> Using NVSHMEM backend")
+            self.nvshmem_initialized = initialize_nvshmem(rank=torch.distributed.get_rank(),
+                                                        world_size=torch.distributed.get_world_size())
+            
+            if self.nvshmem_initialized:
+                logger.info("NVSHMEM initialized successfully for MoE training")
+            else:
+                logger.warning(
+                    "NVSHMEM initialization failed, falling back to NCCL for MoE communication"
                 )
-                if self.nvshmem_initialized:
-                    logger.info("NVSHMEM initialized successfully for MoE training")
-                else:
-                    logger.warning(
-                        "NVSHMEM initialization failed, falling back to NCCL for MoE communication"
-                    )
+
+        else:
+            print(">>> Using NCCL backend")
+
 
         job_config.maybe_log()
 
