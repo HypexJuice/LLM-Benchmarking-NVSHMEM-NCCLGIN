@@ -1,24 +1,27 @@
-# NOTE: this toml config is a preset for 64 A100 GPUs.
+# TorchTitan Config for Llama 3 8B with NCCL-LSA
+# Optimized for 4 GPUs (adjust parallelism for your setup)
 
 [job]
 dump_folder = "./outputs"
-description = "Llama 3 8B training"
+description = "Llama 3 8B training with NCCL-LSA"
 
 [profiling]
-enable_profiling = true
+enable_profiling = false
 save_traces_folder = "profile_trace"
-profile_freq = 16
+profile_freq = 100
 
 [metrics]
 log_freq = 10
-enable_tensorboard = true
+enable_tensorboard = false
 save_tb_folder = "tb"
 
 [model]
 name = "llama3"
 flavor = "8B"
+# Update this path to where your model checkpoint is located
+# Or use HuggingFace: comment out hf_assets_path and the model will download from HF
 hf_assets_path = "./assets/hf/Llama-3.1-8B"
-# converters = ["float8"]
+# If you don't have local assets, comment out the line above and it will download
 
 [optimizer]
 name = "AdamW"
@@ -29,34 +32,35 @@ eps = 1e-8
 warmup_steps = 200  # lr scheduler warm up
 
 [training]
-local_batch_size = 8
-seq_len = 512
+local_batch_size = 1  # Reduced for 4 GPUs (increase if you have more memory)
+seq_len = 2048
 max_norm = 1.0  # grad norm clipping
 steps = 20
 dataset = "c4"
 
 [parallelism]
+# For 4 GPUs, use FSDP (data parallel sharding)
 data_parallel_replicate_degree = 1
-data_parallel_shard_degree = -1
+data_parallel_shard_degree = 4  # FSDP across 4 GPUs
 tensor_parallel_degree = 1
-pipeline_parallel_degree = 4
+pipeline_parallel_degree = 1
 context_parallel_degree = 1
 
 [checkpoint]
 enable = false
 folder = "checkpoint"
-interval = 10
+interval = 1000
 last_save_model_only = true
-export_dtype = "float32"
-async_mode = "disabled" # ["disabled", "async", "async_with_pinned_mem"]
+export_dtype = "bfloat16"
+async_mode = "disabled"
 
 [compile]
-enable=false
+enable = false  # Set to true for faster training after warmup
 components = ["model", "loss"]
 
 [activation_checkpoint]
 mode = "selective"  # ["none", "selective", "full"]
-selective_ac_option = "op"  # "int" = ac every positive int layer or 'op', ac based on ops policy
+selective_ac_option = "op"
 
 [quantize.linear.float8]
 enable_fsdp_float8_all_gather = false
@@ -67,4 +71,5 @@ filter_fqns = ["output"]
 enable = false
 dataset = "c4_validation"
 freq = 500
-steps = 500 # Recommend value for c4_validation with world-size=8 and seq_len=8192
+steps = 100
+

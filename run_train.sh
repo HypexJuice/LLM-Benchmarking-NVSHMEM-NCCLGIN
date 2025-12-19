@@ -12,8 +12,8 @@ set -ex
 # LOG_RANK=0,1 NGPU=4 ./run_train.sh
 # COMM_MODE="fake_backend" ./run_train.sh  # for config validation without GPU
 # COMM_MODE="local_tensor" ./run_train.sh  # for local tensor debugging mode
-NGPU=${NGPU:-"8"}
-export LOG_RANK=${LOG_RANK:-0}
+NGPU=${NGPU:-"4"}
+export LOG_RANK=${LOG_RANK:-3}
 CONFIG_FILE=${CONFIG_FILE:-"./torchtitan/models/llama3/train_configs/debug_model.toml"}
 TRAIN_FILE=${TRAIN_FILE:-"torchtitan.train"}
 # COMM_MODE options: "fake_backend" (dry run), "local_tensor" (debug mode), or empty for normal training
