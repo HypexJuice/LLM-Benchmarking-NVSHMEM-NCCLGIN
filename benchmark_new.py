@@ -11,7 +11,7 @@ env = os.environ.copy()
 
 # Ensure TorchTitan repo is discoverable
 env["PYTHONPATH"] = (
-    "/pscratch/sd/i/ishita/LLM-Benchmarking-NVSHMEM-NCCLGIN:"
+    ""
     + env.get("PYTHONPATH", "")
 )
 
