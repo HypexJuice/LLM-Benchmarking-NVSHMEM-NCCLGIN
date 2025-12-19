@@ -10,7 +10,9 @@ import torch.distributed._symmetric_memory as symm_mem
 # Optionally import low-level nvshmem python package at runtime if you need it.
 
 # This will be set by train.py depending on job_config.model.use_nvshmem
-NVSHMEM_ENABLED_BY_CONFIG = False
+# NVSHMEM_ENABLED_BY_CONFIG = False
+NVSHMEM_ENABLED_BY_CONFIG = (os.getenv("COMM_BACKEND", "nccl").lower() == "nvshmem")
+
 
 _nvshmem_python = None
 
@@ -59,7 +61,6 @@ def initialize_nvshmem(rank: int, world_size: int) -> bool:
     print(">>> [NVSHMEM] Initializing NVSHMEM backend")
 
     # Initialize NVSHMEM runtime
-    out = init_nvshmem(rank, world_size)
 
     # # Set Torch distributed environment to SHMEM
     # os.environ["TORCH_DISTRIBUTED_DEFAULT_COMM"] = "shmem"
@@ -70,8 +71,16 @@ def initialize_nvshmem(rank: int, world_size: int) -> bool:
     # if not dist.is_initialized():
     #     dist.init_process_group(backend="shmem")
 
+    out = init_nvshmem(rank, world_size)
+    if out:
+        print(">>> [NVSHMEM] NVSHMEM runtime active")
+    else:
+        print(">>> [NVSHMEM] NVSHMEM runtime NOT active (will fall back)")
+
     print(">>> [NVSHMEM] NVSHMEM + SHMEM backend initialized")
+
     return out
+
 
 class NVSHMEMContext:
     """Context holder for NVSHMEM runtime state (idempotent)."""
