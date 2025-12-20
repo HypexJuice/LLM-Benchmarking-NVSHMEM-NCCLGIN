@@ -1,7 +1,9 @@
 // torchtitan/components/gin/cuda/gin_lsa.cpp
+#define NCCL_DEVICE_API
 #include <torch/extension.h>
 #include <cuda_runtime.h>
 #include <nccl.h>
+#include <nccl_device/core.h>
 
 #include <mutex>
 #include <stdexcept>
@@ -259,3 +261,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("reduce_scatter_into_tensor", &reduce_scatter_into_tensor,
         "LSA reduce_scatter_into_tensor (sum)");
 }
+
+
+// #include <torch/extension.h>
+
+// // forward declaration of launcher implemented in gin_lsa.cu
+// void gin_lsa_launcher(torch::Tensor x);
+
+// TORCH_LIBRARY(gin_ext, m) {
+//     m.def("lsa", &gin_lsa_launcher, "GIN LSA (device-side)");
+// }

@@ -3,6 +3,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <stdint.h>
+#include <c10/cuda/CUDAStream.h>
 
 __global__ void gin_memcpy_peer_kernel(
     const uint8_t* __restrict__ src,
@@ -42,7 +43,7 @@ void gin_lsa_all_gather_cuda(
   TORCH_CHECK(out_bytes.numel() == (int64_t)chunk_bytes * world_size,
               "out_bytes.numel must equal world_size * local_in_bytes.numel");
 
-  auto stream = at::cuda::getDefaultCUDAStream();
+  cudaStream_t stream = c10::cuda::getDefaultCUDAStream().stream();
 
   // 1) Copy my local chunk into my slice of OUT (local memory)
   {

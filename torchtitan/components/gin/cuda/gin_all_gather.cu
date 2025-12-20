@@ -1,4 +1,5 @@
 // torchtitan/components/gin/cuda/gin_all_gather.cu
+#include <c10/cuda/CUDAStream.h>
 #include <torch/extension.h>
 
 // Forward declaration from gin_lsa.cu

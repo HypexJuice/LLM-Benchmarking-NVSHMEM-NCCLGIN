@@ -3,6 +3,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <stdint.h>
+#include <c10/cuda/CUDAStream.h>
 
 __global__ void gin_elementwise_add_kernel(
     const float* __restrict__ in,
@@ -60,7 +61,7 @@ void gin_lsa_reduce_scatter_cuda(
   TORCH_CHECK(in_bytes.numel() == (int64_t)chunk_bytes * world_size,
               "in_bytes.numel must equal world_size * out_bytes.numel");
 
-  auto stream = at::cuda::getDefaultCUDAStream();
+  cudaStream_t stream = c10::cuda::getDefaultCUDAStream().stream();
 
   // We'll treat data as float for reduction; you can generalize later.
   TORCH_CHECK(chunk_bytes % sizeof(float) == 0,
