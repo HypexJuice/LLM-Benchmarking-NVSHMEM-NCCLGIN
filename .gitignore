@@ -54,3 +54,6 @@ Sessionx.vim
 # Nsight Systems outputs
 *.nsys-rep
 *.sqlite
+# Nsight Systems outputs
+*.nsys-rep
+*.sqlite
