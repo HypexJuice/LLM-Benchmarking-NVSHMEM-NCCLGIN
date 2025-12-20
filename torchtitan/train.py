@@ -12,17 +12,6 @@ from typing import Any, Generator, Iterable
 
 import torch
 import torch.distributed._symmetric_memory as symm_mem
-# symm_mem.set_backend("NVSHMEM")
-# USE_NVSHMEM = os.environ.get("TT_USE_NVSHMEM", "0") == "1"
-# if USE_NVSHMEM:
-#     # Only select the NVSHMEM symmetric backend when explicitly requested.
-#     symm_mem.set_backend("NVSHMEM")
-#     assert symm_mem.is_nvshmem_available(), (
-#         "TT_USE_NVSHMEM=1 but NVSHMEM symmetric backend is not available."
-#     )
-# else:
-#     symm_mem.set_backend("CUDA")
-
 
 COMM_BACKEND = os.getenv("COMM_BACKEND", "nccl")
 print(">>> COMM_BACKEND =", COMM_BACKEND)
@@ -30,6 +19,12 @@ print(">>> COMM_BACKEND =", COMM_BACKEND)
 if COMM_BACKEND == "nvshmem":
     symm_mem.set_backend("NVSHMEM")
     print(">>> Set symmetric memory backend to NVSHMEM")
+
+    from torchtitan.components.nvshmem_backend import (
+        init_nvshmem,
+        finalize_nvshmem,
+        initialize_nvshmem,
+    )
 else:
     print(">>> Using NCCL (default) backend")
 
@@ -56,7 +51,7 @@ from torchtitan.tools.profiling import (
     maybe_enable_profiling,
 )
 
-from torchtitan.components.nvshmem_backend import init_nvshmem, finalize_nvshmem, initialize_nvshmem
+# from torchtitan.components.nvshmem_backend import init_nvshmem, finalize_nvshmem, initialize_nvshmem
 
 
 class Trainer(torch.distributed.checkpoint.stateful.Stateful):

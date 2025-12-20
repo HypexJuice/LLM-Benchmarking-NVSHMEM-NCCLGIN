@@ -22,6 +22,8 @@ from torchtitan.distributed.parallel_dims import ParallelDims
 from torchtitan.tools.logging import logger
 from torchtitan.tools.utils import device_module, device_type
 
+from torchtitan.components.gin.backend import gin_enabled
+from torchtitan.components.gin.ops import gin_all_reduce
 
 def _dist_reduce(
     x: torch.Tensor,
@@ -44,9 +46,20 @@ def _dist_reduce(
         x = x.full_tensor()
 
     if extra_pg is not None:
-        x = funcol.all_reduce(x, reduceOp=reduceOp, group=extra_pg)
+        # x = funcol.all_reduce(x, reduceOp=reduceOp, group=extra_pg)
+        if gin_enabled():
+            x = gin_all_reduce(x, reduceOp=reduceOp, group=extra_pg)
+        else:
+            x = funcol.all_reduce(x, reduceOp=reduceOp, group=extra_pg)
 
     assert x.numel() == 1  # required by `.item()`
+
+    # Reduce on the main mesh
+    if gin_enabled():
+        x = gin_all_reduce(x, reduceOp=reduceOp, group=mesh)
+    else:
+        x = funcol.all_reduce(x, reduceOp=reduceOp, group=mesh)
+
     return funcol.all_reduce(x, reduceOp=reduceOp, group=mesh).item()
 
 
