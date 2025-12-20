@@ -11,19 +11,18 @@ env = os.environ.copy()
 
 # Ensure TorchTitan repo is discoverable
 env["PYTHONPATH"] = (
-    ""
+    "/pscratch/sd/a/as4455/torchtitan:"
     + env.get("PYTHONPATH", "")
 )
 
 # Config file used for BOTH NCCL and NVSHMEM
-TOML_FILE = "./torchtitan/models/llama3/train_configs/llama3_8bnew.toml"
+TOML_FILE = "./torchtitan/models/llama3/train_configs/llama3_8b_newwww.toml"
 
 # Distributed training command
 TRAIN_CMD = f"torchrun --nproc_per_node=4 torchtitan/train.py --job.config_file {TOML_FILE}"
 
 # Backends to benchmark
 BACKENDS = ["nvshmem", "nccl"]
-
 
 # ---------------------------------------------------------------------
 # 2. Run training for a backend
@@ -36,7 +35,7 @@ def run_training(backend):
 
     start = time.time()
 
-    log_file = f"benchmark_{backend}_2.log"
+    log_file = f"logs/benchmark_{backend}_2.log"
 
     print("Running:", TRAIN_CMD)
 
