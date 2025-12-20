@@ -50,3 +50,7 @@ Sessionx.vim
 .tar
 
 *.txt
+
+# Nsight Systems outputs
+*.nsys-rep
+*.sqlite
