@@ -1,0 +1,16 @@
+[
+    {
+        "backend": "nvshmem",
+        "time_sec": 23.902,
+        "log_file": "logs/benchmark_nvshmem_20251220_034105.log",
+        "nsys_reports": [],
+        "success": false,
+        "error": "    self.device = torch.device(f\"{device_type}:{int(os.environ['LOCAL_RANK'])}\")\n  File \"/global/homes/a/as4455/.conda/envs/titan/lib/python3.10/os.py\", line 680, in __getitem__\n    raise KeyError(key) from None\n    raise KeyError(key) from None\nKeyError: 'LOCAL_RANK'\n    raise KeyError(key) from None\nKeyError: 'LOCAL_RANK'\n",
+        "avg_tokens_per_sec": 0.0,
+        "peak_tokens_per_sec": 0.0,
+        "num_steps_completed": 0,
+        "final_loss": null,
+        "errors": {},
+        "sample_steps": []
+    }
+]

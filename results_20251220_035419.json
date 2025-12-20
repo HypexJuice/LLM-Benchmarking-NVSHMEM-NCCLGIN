@@ -1,0 +1,18 @@
+[
+  {
+    "backend": "nccl",
+    "success": false,
+    "time_sec": 34.82,
+    "steps": 0,
+    "avg_tokens_per_sec": 0,
+    "log_file": "logs/bench_nccl_20251220_035419.log"
+  },
+  {
+    "backend": "nvshmem",
+    "success": false,
+    "time_sec": 36.44,
+    "steps": 0,
+    "avg_tokens_per_sec": 0,
+    "log_file": "logs/bench_nvshmem_20251220_035419.log"
+  }
+]

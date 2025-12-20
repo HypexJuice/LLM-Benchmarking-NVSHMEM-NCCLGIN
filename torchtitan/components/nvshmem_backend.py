@@ -6,7 +6,7 @@ import threading
 import os
 
 # Use PyTorch symmetric memory API (preferred)
-import torch.distributed._symmetric_memory as symm_mem
+# import torch.distributed._symmetric_memory as symm_mem
 # Optionally import low-level nvshmem python package at runtime if you need it.
 
 # This will be set by train.py depending on job_config.model.use_nvshmem
@@ -46,8 +46,9 @@ def is_nvshmem_active_runtime() -> bool:
     if not NVSHMEM_ENABLED_BY_CONFIG:
         return False
     try:
-        if not symm_mem.is_nvshmem_available():
-            return False
+        def is_nvshmem_active_runtime() -> bool:
+            return NVSHMEM_ENABLED_BY_CONFIG
+
         backend = _current_symm_backend()
         return "nvshmem" in backend
     except Exception:
@@ -90,74 +91,97 @@ class NVSHMEMContext:
         self.my_pe = -1
         self.n_pes = -1
 
+    # def init(self, rank: int, world_size: int) -> bool:
+    #     """
+    #     Initialize NVSHMEM runtime if available.
+    #     This function is idempotent and safe to call after dist.init_process_group.
+    #     Returns True on success (or if already initialized).
+    #     """
+    #     # global _nvshmem_python
+    #     # with _nvshmem_lock:
+    #     #     if self.initialized:
+    #     #         return True
+
+    #     #     # Primary check: PyTorch symmetric memory must be compiled & backend selected.
+    #     #     if not symm_mem.is_nvshmem_available():
+    #     #         return False
+
+    #     #     backend = _current_symm_backend()
+    #     #     if "nvshmem" not in backend:
+    #     #         # Backend was not set to NVSHMEM yet.
+    #     #         return False
+    #     global _nvshmem_python
+    #     with _nvshmem_lock:
+    #         if self.initialized:
+    #             return True
+    #         if not NVSHMEM_ENABLED_BY_CONFIG:
+    #             return False
+    #         # Primary check: PyTorch symmetric memory must be compiled & backend selected.
+    #         if not NVSHMEM_ENABLED_BY_CONFIG:
+    #             return False
+
+    #         # NVSHMEM4Py was already initialized earlier
+    #         return True
+
+    #         # Optional: try to import Python nvshmem package for peer-level info,
+    #         # but don't require it. If it exists, we can query my_pe/n_pes.
+    #         try:
+    #             if _nvshmem_python is None:
+    #                 import nvshmem as _nvshmem_python  # type: ignore
+    #             # If import succeeds, call its init if needed.
+    #             try:
+    #                 # Some nvshmem python wrappers provide init/finalize; call if present.
+    #                 if hasattr(_nvshmem_python, "init"):
+    #                     _nvshmem_python.init()
+    #                 if hasattr(_nvshmem_python, "my_pe"):
+    #                     self.my_pe = _nvshmem_python.my_pe()
+    #                 if hasattr(_nvshmem_python, "n_pes"):
+    #                     self.n_pes = _nvshmem_python.n_pes()
+    #             except Exception:
+    #                 # not fatal; we'll continue using PyTorch symm primitives
+    #                 pass
+    #         except ImportError:
+    #             # nvshmem python package not available; that's fine.
+    #             _nvshmem_python = None
+
+    #         # If we didn't get my_pe/n_pes from python nvshmem, fall back to dist
+    #         if self.my_pe == -1:
+    #             try:
+    #                 self.my_pe = dist.get_rank()
+    #             except Exception:
+    #                 self.my_pe = 0
+    #         if self.n_pes == -1:
+    #             try:
+    #                 self.n_pes = dist.get_world_size()
+    #             except Exception:
+    #                 self.n_pes = 1
+
+    #         self.initialized = True
+    #         return True
+
     def init(self, rank: int, world_size: int) -> bool:
-        """
-        Initialize NVSHMEM runtime if available.
-        This function is idempotent and safe to call after dist.init_process_group.
-        Returns True on success (or if already initialized).
-        """
-        # global _nvshmem_python
-        # with _nvshmem_lock:
-        #     if self.initialized:
-        #         return True
-
-        #     # Primary check: PyTorch symmetric memory must be compiled & backend selected.
-        #     if not symm_mem.is_nvshmem_available():
-        #         return False
-
-        #     backend = _current_symm_backend()
-        #     if "nvshmem" not in backend:
-        #         # Backend was not set to NVSHMEM yet.
-        #         return False
         global _nvshmem_python
         with _nvshmem_lock:
             if self.initialized:
                 return True
+
             if not NVSHMEM_ENABLED_BY_CONFIG:
                 return False
-            # Primary check: PyTorch symmetric memory must be compiled & backend selected.
-            if not symm_mem.is_nvshmem_available():
-                return False
-            backend = _current_symm_backend()
-            if "nvshmem" not in backend:
-                # Backend was not set to NVSHMEM yet.
-                return False
 
-            # Optional: try to import Python nvshmem package for peer-level info,
-            # but don't require it. If it exists, we can query my_pe/n_pes.
-            try:
-                if _nvshmem_python is None:
-                    import nvshmem as _nvshmem_python  # type: ignore
-                # If import succeeds, call its init if needed.
-                try:
-                    # Some nvshmem python wrappers provide init/finalize; call if present.
-                    if hasattr(_nvshmem_python, "init"):
-                        _nvshmem_python.init()
-                    if hasattr(_nvshmem_python, "my_pe"):
-                        self.my_pe = _nvshmem_python.my_pe()
-                    if hasattr(_nvshmem_python, "n_pes"):
-                        self.n_pes = _nvshmem_python.n_pes()
-                except Exception:
-                    # not fatal; we'll continue using PyTorch symm primitives
-                    pass
-            except ImportError:
-                # nvshmem python package not available; that's fine.
-                _nvshmem_python = None
+            # NVSHMEM4Py is already initialized by train.py
+            # try:
+            #     if _nvshmem_python is None:
+            #         import nvshmem.core as _nvshmem_python
+            # except Exception:
+            #     return False
 
-            # If we didn't get my_pe/n_pes from python nvshmem, fall back to dist
-            if self.my_pe == -1:
-                try:
-                    self.my_pe = dist.get_rank()
-                except Exception:
-                    self.my_pe = 0
-            if self.n_pes == -1:
-                try:
-                    self.n_pes = dist.get_world_size()
-                except Exception:
-                    self.n_pes = 1
+            # Populate rank info
+            self.my_pe = rank
+            self.n_pes = world_size
 
             self.initialized = True
             return True
+
 
     def finalize(self) -> None:
         """Finalize NVSHMEM runtime if possible."""

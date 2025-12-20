@@ -1,0 +1,30 @@
+[
+  {
+    "backend": "nccl",
+    "success": true,
+    "time_sec": 185.81,
+    "steps": 12,
+    "avg_tokens_per_sec": 0,
+    "log_file": "logs/bench_nccl_20251220_050133.log",
+    "profile_files": [
+      "nsys_nccl_20251220_050133_rank0.nsys-rep",
+      "nsys_nccl_20251220_050133_rank1.nsys-rep",
+      "nsys_nccl_20251220_050133_rank2.nsys-rep",
+      "nsys_nccl_20251220_050133_rank3.nsys-rep"
+    ]
+  },
+  {
+    "backend": "nvshmem",
+    "success": true,
+    "time_sec": 179.42,
+    "steps": 12,
+    "avg_tokens_per_sec": 0,
+    "log_file": "logs/bench_nvshmem_20251220_050133.log",
+    "profile_files": [
+      "nsys_nvshmem_20251220_050133_rank0.nsys-rep",
+      "nsys_nvshmem_20251220_050133_rank1.nsys-rep",
+      "nsys_nvshmem_20251220_050133_rank2.nsys-rep",
+      "nsys_nvshmem_20251220_050133_rank3.nsys-rep"
+    ]
+  }
+]

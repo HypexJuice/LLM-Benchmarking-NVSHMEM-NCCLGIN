@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime
 
+
 # ---------------------------------------------------------------------
 # 1. ENVIRONMENT SETUP
 # ---------------------------------------------------------------------
@@ -11,7 +12,7 @@ env = os.environ.copy()
 
 # Ensure TorchTitan repo is discoverable
 env["PYTHONPATH"] = (
-    ""
+    "/pscratch/sd/a/as4455/torchtitan:"
     + env.get("PYTHONPATH", "")
 )
 
@@ -22,7 +23,7 @@ TOML_FILE = "./torchtitan/models/llama3/train_configs/llama3_8bnew.toml"
 TRAIN_CMD = f"torchrun --nproc_per_node=4 torchtitan/train.py --job.config_file {TOML_FILE}"
 
 # Backends to benchmark
-BACKENDS = ["nvshmem", "nccl"]
+BACKENDS = ["nccl", "nvshmem"]
 
 
 # ---------------------------------------------------------------------
@@ -36,7 +37,8 @@ def run_training(backend):
 
     start = time.time()
 
-    log_file = f"benchmark_{backend}_2.log"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = f"benchmark_{backend}_2_{timestamp}.log"
 
     print("Running:", TRAIN_CMD)
 

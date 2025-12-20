@@ -11,11 +11,24 @@ from datetime import timedelta
 from typing import Any, Generator, Iterable
 
 import torch
+# import torch.distributed._symmetric_memory as symm_mem
+
+
+COMM_BACKEND = os.getenv("COMM_BACKEND", "nccl")
+print(">>> COMM_BACKEND =", COMM_BACKEND)
+
+# if COMM_BACKEND == "nvshmem":
+#     # symm_mem.set_backend("NVSHMEM")
+#     print(">>> Set symmetric memory backend to NVSHMEM")
+# else:
+#     print(">>> Using NCCL (default) backend")
+
+import torchtitan
+
 from torch.distributed.elastic.multiprocessing.errors import record
 import torch.distributed as dist
 from torch.cuda import nvtx
 
-import torchtitan
 import torchtitan.protocols.train_spec as train_spec_module
 from torchtitan.components.checkpoint import CheckpointManager
 from torchtitan.components.dataloader import DataloaderExhaustedError
@@ -35,15 +48,8 @@ from torchtitan.tools.profiling import (
     maybe_enable_profiling,
 )
 
-# Get backend from environment
-COMM_BACKEND = os.getenv("COMM_BACKEND", "nccl")
-print(f">>> COMM_BACKEND = {COMM_BACKEND}")
+# from torchtitan.components.nvshmem_backend import init_nvshmem, finalize_nvshmem, initialize_nvshmem
 
-if COMM_BACKEND == "nvshmem":
-    symm_mem.set_backend("NVSHMEM")
-    print(">>> Set symmetric memory backend to NVSHMEM")
-else:
-    print(">>> Using NCCL (default) backend")
 
 class Trainer(torch.distributed.checkpoint.stateful.Stateful):
     # core configs
@@ -77,8 +83,11 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
     # additional training states
     step: int
     ntokens_seen: int
+
+    # Add NVSHMEM tracking attribute
     nvshmem_initialized: bool
 
+    # Enable debug tracing on failure: https://pytorch.org/docs/stable/elastic/errors.html
     @record
     def __init__(self, job_config: JobConfig):
         torch._C._log_api_usage_once("torchtitan.train")
@@ -93,25 +102,103 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
 
         device_module, device_type = utils.device_module, utils.device_type
         self.device = torch.device(f"{device_type}:{int(os.environ['LOCAL_RANK'])}")
-        device_module.set_device(self.device)
-
-        # Initialize distributed
+    
+        # 1. FIRST: Init distributed (creates process groups)
         self.parallel_dims = parallel_dims = self.init_distributed()
-
-        # Simple NVSHMEM check using PyTorch's built-in symmetric memory
+        
+        # 2. SECOND: Set device (required before NVSHMEM)
+        device_module.set_device(self.device)
+        
+        # 3. THIRD: Barrier to ensure all processes are ready
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+        
+        # 4. FOURTH: NOW it's safe to initialize NVSHMEM
+        self.nvshmem_initialized = False
         if COMM_BACKEND == "nvshmem":
             try:
-                import torch.distributed._symmetric_memory as symm_mem
+                from torchtitan.components.nvshmem4py_init import nvshmem4py_init_from_env
+                self.nvshmem_initialized = nvshmem4py_init_from_env()
                 
-                if symm_mem.is_nvshmem_available():
-                    logger.info("✓ PyTorch symmetric memory with NVSHMEM backend available")
-                    self.nvshmem_initialized = True
+                if self.nvshmem_initialized:
+                    logger.info("✓ NVSHMEM backend initialized")
                 else:
-                    logger.warning("NVSHMEM not available in PyTorch build, using NCCL")
-                    self.nvshmem_initialized = False
+                    logger.warning("NVSHMEM init failed, falling back to NCCL")
+                    
             except Exception as e:
-                logger.warning(f"Symmetric memory check failed: {e}, using NCCL")
+                logger.error(f"NVSHMEM initialization error: {e}")
+                logger.warning("Falling back to NCCL")
                 self.nvshmem_initialized = False
+
+
+        # # init distributed and build meshes
+        # self.parallel_dims = parallel_dims = self.init_distributed()
+
+        # if COMM_BACKEND == "nvshmem":
+        #     from torchtitan.components.nvshmem4py_init import nvshmem4py_init_from_env
+        #     nvshmem4py_init_from_env()
+
+        # ============================================================
+        # NVSHMEM4Py sanity check (isolated, one-time)
+        # ============================================================
+        # if COMM_BACKEND == "nvshmem":
+        #     from mpi4py import MPI
+        #     import nvshmem.core as nv
+        #     from torch.cuda import nvtx
+        #     import torch
+
+        #     comm = MPI.COMM_WORLD
+        #     rank = comm.Get_rank()
+        #     world = comm.Get_size()
+
+        #     if rank == 0:
+        #         logger.info("Running NVSHMEM4Py sanity check")
+
+        #     # Initialize NVSHMEM runtime (MPI-based)
+        #     nv.init(mpi_comm=comm)
+
+        #     N = 1024 * 1024  # 4MB
+        #     symm_buf = nv.array((N,), dtype="float32")
+
+        #     local = torch.ones(N, device="cuda", dtype=torch.float32) * rank
+        #     peer = (rank + 1) % world
+
+        #     nvtx.range_push("NVSHMEM4PY_PUT_SANITY")
+        #     nv.put(symm_buf, local, pe=peer)
+        #     nvtx.range_pop()
+
+        #     nv.barrier(nv.Teams.TEAM_WORLD)
+
+        #     if rank == 0:
+        #         logger.info("NVSHMEM4Py sanity check completed")
+
+        #     nv.free_array(symm_buf)
+        #     nv.finalize()
+
+        # _ensure_symm_group("0", dist.group.WORLD)
+        # nvshmem_sanity()
+
+        # if COMM_BACKEND == "nvshmem":
+        #     # dist.barrier()
+        #     # nvshmem_sanity_bench(iters=500, nbytes=4 << 20)
+        #     # dist.barrier()
+        #     print(">>> Using NVSHMEM backend")
+        #     self.nvshmem_initialized = initialize_nvshmem(rank=torch.distributed.get_rank(),
+        #                                                 world_size=torch.distributed.get_world_size())
+            
+        #     if self.nvshmem_initialized:
+        #         logger.info("NVSHMEM initialized successfully")
+        #     else:
+        #         logger.warning(
+        #             "NVSHMEM initialization failed, falling back to NCCL"
+        #         )
+        #     if job_config.model.use_moe == True:
+        #         print(">>> Using NVSHMEM with MoE")
+
+
+        # else:
+        #     print(">>> Using NCCL backend")
+
 
         job_config.maybe_log()
 
@@ -131,6 +218,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         )
 
         # Set random seed, and maybe enable deterministic mode
+        # (mainly for debugging, expect perf loss).
         dist_utils.set_determinism(
             world_mesh,
             self.device,
@@ -155,6 +243,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
 
         # build model (using meta init)
         model_args = self.train_spec.model_args[job_config.model.flavor]
+        # set the model args from training job configs
         model_args.update_from_config(job_config)
         self.model_args = model_args
 
@@ -167,7 +256,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         ):
             model = self.train_spec.model_cls(model_args)
 
-        # Build the collection of model converters
+        # Build the collection of model converters. No-op if `model.converters` empty
         model_converters = build_model_converters(job_config, parallel_dims)
         model_converters.convert(model)
 
@@ -193,7 +282,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             f"{color.red}size: {model_param_count:,} total parameters{color.reset}"
         )
 
-        # move sharded model to CPU/GPU and initialize weights
+        # move sharded model to CPU/GPU and initialize weights via DTensor
         if job_config.checkpoint.create_seed_checkpoint:
             init_device = "cpu"
             buffer_device = None
@@ -211,13 +300,16 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         # verify batch sizes
         global_batch_size = job_config.training.global_batch_size
         if global_batch_size < 0:
+            # This global batch size results in 1 gradient accumulation
+            # step.
             global_batch_size = job_config.training.local_batch_size * dp_degree
         assert global_batch_size > 0
         assert (
             global_batch_size % (job_config.training.local_batch_size * dp_degree) == 0
         ), (
             f"global batch size must be multiple of local batch size times "
-            f"data-parallel degree"
+            f"data-parallel degree ({global_batch_size} "
+            f"% ({job_config.training.local_batch_size} * {dp_degree}) != 0)"
         )
 
         # calculate gradient accumulation steps
@@ -237,6 +329,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                     f"does not support pipelining"
                 )
 
+            # apply both PT-D Pipeline Parallel and SPMD-style PT-D techniques
             (
                 self.pp_schedule,
                 self.model_parts,
@@ -251,6 +344,8 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                 self.train_spec.parallelize_fn,
                 self.loss_fn,
             )
+            # when PP is enabled, `model` obj is no longer used after this point,
+            # model_parts is used instead
             del model
 
             for m in self.model_parts:
@@ -259,18 +354,22 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                     m.init_weights(buffer_device=buffer_device)
                 m.train()
 
+            # confirm that user will be able to view loss metrics on the console
             ensure_pp_loss_visible(parallel_dims, job_config, color)
         else:
+            # apply PT-D Tensor Parallel, activation checkpointing, torch.compile, Data Parallel
             model = self.train_spec.parallelize_fn(model, parallel_dims, job_config)
+
             model.to_empty(device=init_device)
             with torch.no_grad():
                 model.init_weights(buffer_device=buffer_device)
             model.train()
+
             self.model_parts = [model]
 
         self.ft_manager.maybe_set_all_reduce_hook(self.model_parts)
 
-        # initialize device memory monitor
+        # initialize device memory monitor and get peak flops for MFU calculation
         device_memory_monitor = self.metrics_processor.device_memory_monitor
         gpu_peak_flops = utils.get_peak_flops(device_memory_monitor.device_name)
         logger.info(f"Peak FLOPS used for computing MFU: {gpu_peak_flops:.3e}")
@@ -288,7 +387,9 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         self.lr_schedulers = self.train_spec.build_lr_schedulers_fn(
             self.optimizers, job_config.lr_scheduler, job_config.training.steps
         )
-        
+        # Post optimizer step model converters hook.
+        # e.g. calculate float8 dynamic amax/scale for all-parameter for FSDP2
+        # where it issues a single all-reduce for all parameters at once for better performance
         self.optimizers.register_step_post_hook(
             lambda *args, **kwargs: model_converters.post_optimizer_hook(
                 self.model_parts
@@ -297,7 +398,8 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         self.metrics_processor.optimizers = self.optimizers
         self.metrics_processor.model_parts = self.model_parts
 
-        # Initialize trainer states
+        # Initialize trainer states that will be saved in checkpoint.
+        # These attributes must be initialized before checkpoint loading.
         self.step = 0
         self.ntokens_seen = 0
 
@@ -368,6 +470,9 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             f"total steps {job_config.training.steps} "
             f"(warmup {job_config.lr_scheduler.warmup_steps})"
         )
+        # if ok:
+        #     from torchtitan.components.nvshmem4py_sanity import nvshmem4py_sanity_put
+        #     nvshmem4py_sanity_put(n=1024)
 
     def init_distributed(self) -> ParallelDims:
         job_config = self.job_config
@@ -399,13 +504,13 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         data_iterator = iter(data_iterable)
 
         while True:
-            nvtx.range_push("data_loading")
             data_load_start = time.perf_counter()
             try:
                 batch = next(data_iterator)
             except StopIteration as ex:
+                # If data runs out during gradient accumulation, that
+                # entire step will not be executed.
                 raise DataloaderExhaustedError() from ex
-            
             input_dict, labels = batch
             ntokens_batch = labels.numel()
             self.ntokens_seen += ntokens_batch
@@ -414,21 +519,55 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                 time.perf_counter() - data_load_start
             )
 
-            # Move tensors to device
+            # Move tensors to the appropriate device
             for k, v in input_dict.items():
                 if isinstance(v, torch.Tensor):
                     input_dict[k] = v.to(device_type)
             labels = labels.to(device_type)
-            nvtx.range_pop()
 
             yield input_dict, labels
 
     def post_dataloading_process(
         self, input_dict: dict[str, torch.Tensor], labels: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor], dict[str, Any]]:
-        """Post-processing hook after data loading and before model forward pass."""
+        """
+        Post-processing hook after data loading and before model forward pass.
+
+        This method processes the raw data from the dataloader and prepares it for
+        the model's forward pass. It separates the main input tensor from auxiliary
+        inputs and constructs additional keyword arguments (e.g., attention masks).
+
+        This method can be overridden in subclasses to customize data processing
+        for different training strategies (e.g., converting tensors to DTensors,
+        applying custom transformations, etc.).
+
+        Args:
+            input_dict: Dictionary containing tensors from the dataloader. Must
+                contain an "input" key with the main input tensor. May contain
+                additional keys for auxiliary inputs (e.g., position ids).
+            labels: Target labels for the batch.
+
+        Returns:
+            A tuple of (inputs, labels, extra_inputs, extra_kwargs) where:
+                - inputs: Main input tensor extracted from input_dict["input"].
+                - labels: Target labels (unchanged from input parameter).
+                - extra_inputs: Dict of auxiliary input tensors (all keys except
+                    "input" from input_dict). These are passed to the model forward
+                    but are NOT forwarded across pipeline parallel stages.
+                - extra_kwargs: Dict of additional keyword arguments for model forward.
+                    These ARE forwarded across pipeline parallel stages. Contains
+                    attention_masks if flex attention is enabled.
+
+        Note:
+            The distinction between extra_inputs and extra_kwargs is important for
+            pipeline parallelism: extra_kwargs are forwarded to all pipeline stages,
+            while extra_inputs are only available to the first stage.
+        """
         inputs = input_dict["input"]
         extra_inputs = {k: v for k, v in input_dict.items() if k != "input"}
+        # For arguments, like attention_masks, we have to put them in a separate
+        # dict as extra_inputs are not forwarded to other stages in PP, but
+        # extra_kwargs are.
         extra_kwargs: dict[str, Any] = {}
 
         if getattr(self.model_args, "use_flex_attn", False):
@@ -450,8 +589,8 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         inputs, labels, extra_inputs, extra_kwargs = self.post_dataloading_process(
             input_dict, labels
         )
-        
         # apply context parallelism if cp is enabled
+        # ensure CP handles the separate freqs_cis buffer for each pp stage
         optional_context_parallel_ctx = (
             dist_utils.create_context_parallel_ctx(
                 cp_mesh=parallel_dims.world_mesh["cp"],
@@ -465,7 +604,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         )
 
         if parallel_dims.pp_enabled:
-            # Pipeline Parallel forward / backward
+            # Pipeline Parallel forward / backward inside step() call
             with self.train_context(optional_context_parallel_ctx):
                 targets, losses = (
                     (labels, []) if self.pp_has_last_stage else (None, None)
@@ -487,7 +626,12 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                         return_outputs=False,
                     )
 
+            # accumulate losses across pipeline microbatches
+            # TODO: PP+FSDP unexpectedly puts the loss back to the CPU
             loss = (
+                # using sum instead of mean because we already rescale the
+                # loss_fn down by a factor of n_microbatches in
+                # torchtitan/distributed/pipeline_parallel.py
                 torch.sum(torch.stack(losses)).to(self.device)
                 if self.pp_has_last_stage
                 else torch.tensor([-1.0], device=self.device)
@@ -497,20 +641,11 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             with self.train_context(optional_context_parallel_ctx):
                 assert len(model_parts) == 1
                 with self.maybe_enable_amp:
-                    nvtx.range_push("forward_pass")
                     pred = model_parts[0](inputs, **extra_inputs, **extra_kwargs)
-                    nvtx.range_pop()
-                    
-                    nvtx.range_push("loss_computation")
                     loss = self.loss_fn(pred, labels)
-                    nvtx.range_pop()
-                
+                # need to free pred before bwd to avoid peaking memory
                 del pred
-                
-                nvtx.range_push("backward_pass")
                 loss.backward()
-                nvtx.range_pop()
-        
         nvtx.range_pop()
         return loss
 
@@ -518,21 +653,22 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         self, data_iterator: Iterable[tuple[dict[str, torch.Tensor], torch.Tensor]]
     ):
         nvtx.range_push(f"train_step_{self.step}")
-        
-        nvtx.range_push("zero_grad")
         self.optimizers.zero_grad()
-        nvtx.range_pop()
-        
+        # Save the current step learning rate for logging
         lr = self.lr_schedulers.schedulers[0].get_last_lr()[0]
+
+        # Keep these variables local to shorten the code as these are
+        # the major variables that are used in the training loop.
         parallel_dims = self.parallel_dims
 
         accumulated_losses = []
+        # If data runs out during gradient accumulation, that
+        # entire step will not be executed.
         for _microbatch in range(self.gradient_accumulation_steps):
             input_dict, labels = next(data_iterator)
             loss = self.forward_backward_step(input_dict, labels)
             accumulated_losses.append(loss.detach())
 
-        nvtx.range_push("gradient_clipping")
         grad_norm = dist_utils.clip_grad_norm_(
             [p for m in self.model_parts for p in m.parameters()],
             self.job_config.training.max_norm,
@@ -542,27 +678,20 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             ),
             ep_enabled=parallel_dims.ep_enabled,
         )
-        nvtx.range_pop()
-        
         self.checkpointer.maybe_wait_for_staging()
-        
         nvtx.range_push("optimizer_step")
         self.optimizers.step()
         nvtx.range_pop()
-        
-        nvtx.range_push("lr_scheduler_step")
         self.lr_schedulers.step()
-        nvtx.range_pop()
+        
 
-        # Reduce the data collected over gradient accumulation steps
+        # Reduce the data collected over gradient accumulation steps.
         loss = torch.sum(torch.stack(accumulated_losses))
 
         # log metrics
         if not self.metrics_processor.should_log(self.step):
-            nvtx.range_pop()
             return
 
-        nvtx.range_push("metrics_logging")
         if parallel_dims.dp_cp_enabled:
             loss = loss.detach()
             ft_pg = self.ft_manager.loss_sync_pg
@@ -593,7 +722,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
             extra_metrics=extra_metrics,
         )
         nvtx.range_pop()
-        nvtx.range_pop()
+
 
     @record
     def train(self):
@@ -665,7 +794,8 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
                 if memory_profiler:
                     memory_profiler.step()
 
-                # reduce timeout after first train step
+                # reduce timeout after first train step for faster signal
+                # (assuming lazy init and compilation are finished)
                 if self.step == 1:
                     dist_utils.set_pg_timeouts(
                         timeout=timedelta(
@@ -696,9 +826,131 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
         if hasattr(self, "metrics_processor") and self.metrics_processor:
             self.metrics_processor.close()
 
+        if hasattr(self, "checkpointer") and self.checkpointer:
+            self.checkpointer.close()
+        if hasattr(self, "metrics_processor") and self.metrics_processor:
+            self.metrics_processor.close()
+
+        # Cleanup NVSHMEM if initialized
+        if hasattr(self, 'nvshmem_initialized') and self.nvshmem_initialized:
+            try:
+                from torchtitan.components.nvshmem4py_init import nvshmem4py_finalize
+                nvshmem4py_finalize()
+                logger.info("NVSHMEM finalized")
+            except Exception as e:
+                logger.warning(f"NVSHMEM finalize error: {e}")
+
+
+        # # Cleanup NVSHMEM if it was initialized
+        # if hasattr(self, 'nvshmem_initialized') and self.nvshmem_initialized:
+        #     finalize_nvshmem()
+        #     logger.info("NVSHMEM finalized")
+
+# import torch
+# import nvshmem.core as nv
+# from torch.cuda import nvtx
+# import torch.distributed as dist
+
+# def nvshmem4py_sanity_put(n=1<<20):
+#     rank = dist.get_rank()
+#     world = dist.get_world_size()
+#     peer = (rank + 1) % world
+
+#     # Symmetric buffer (NVSHMEM heap). NVSHMEM4Py exposes torch interop. :contentReference[oaicite:6]{index=6}
+#     # Depending on your NVSHMEM4Py version, this may be in nvshmem.interop.torch.
+#     from nvshmem.interop import torch as nv_torch
+
+#     buf = nv_torch.empty((n,), dtype=torch.float32, device="cuda")
+#     src = torch.full((n,), float(rank), device="cuda", dtype=torch.float32)
+
+#     nvtx.range_push("")
+#     nv.put(buf, src, pe=peer)
+#     nvtx.range_pop()
+
+#     nv.barrier(nv.Teams.TEAM_WORLD)
+#     if rank == 0:
+#         print("NVSHMEM4Py put completed")
+
+
+# def symm_rendezvous(t: torch.Tensor, group):
+#     """
+#     Portable wrapper: different builds have slightly different rendezvous signatures.
+#     """
+#     fn = symm_mem.rendezvous
+#     sig = inspect.signature(fn)
+
+#     # Most common: rendezvous(tensor, group=pg)
+#     try:
+#         if "group" in sig.parameters:
+#             return fn(t, group=group)
+#     except TypeError:
+#         pass
+
+#     # Next: rendezvous(tensor, pg)
+#     try:
+#         return fn(t, group)
+#     except TypeError:
+#         pass
+
+#     # Some builds also want a string group name
+#     # (use a deterministic name)
+#     try:
+#         return fn(t, "world", group)
+#     except TypeError:
+#         pass
+
+#     # Last resort
+#     return fn(t)
+
+# def _ensure_symm_group(group_name: str = "0", pg=None):
+#     if pg is None:
+#         pg = dist.group.WORLD
+
+#     # Some builds expose create_group(name, pg), others expose register_group, etc.
+#     if hasattr(symm_mem, "create_group"):
+#         symm_mem.create_group(group_name, pg)
+#         return
+
+#     if hasattr(symm_mem, "register_group"):
+#         symm_mem.register_group(group_name, pg)
+#         return
+
+#     # Last resort: try private API names some nightlies used
+#     for fn in ["_create_group", "_register_group", "register_process_group"]:
+#         if hasattr(symm_mem, fn):
+#             getattr(symm_mem, fn)(group_name, pg)
+#             return
+
+#     raise RuntimeError("No known symm_mem group registration API found in this build")
+
+# def nvshmem_sanity():
+#     import torch
+#     import torch.distributed as dist
+#     import torch.distributed._symmetric_memory as symm_mem
+
+#     rank = dist.get_rank()
+#     world = dist.get_world_size()
+
+#     assert symm_mem.is_nvshmem_available(), "NVSHMEM not available"
+
+#     # buf = symm_mem.empty((1024,), dtype=torch.float32, device="cuda")
+#     # buf.zero_()
+
+#     torch.cuda.synchronize()
+#     dist.barrier()
+
+#     if rank == 0:
+#         print("NVSHMEM symmetric allocation OK")
+
+#     dist.barrier()
+
 
 def main(trainer_class: type[Trainer]) -> None:
-    """Main entry point for training."""
+    """Main entry point for training with a specified trainer class.
+
+    Args:
+        trainer_class: The trainer class to instantiate (e.g., Trainer, FluxTrainer, TorchCommsTrainer)
+    """
     init_logger()
     config_manager = ConfigManager()
     config = config_manager.parse_args()
@@ -707,6 +959,9 @@ def main(trainer_class: type[Trainer]) -> None:
     try:
         trainer = trainer_class(config)
 
+        # TODO(local_tensor): Remove this special case once LocalTensor supports
+        # init_weights() and foreach_allgather. In local tensor mode, skip
+        # training/checkpointing as the # model is not fully initialized
         if config.comm.mode == "local_tensor":
             logger.info("Local tensor mode enabled - skipping training execution")
             return
@@ -714,10 +969,10 @@ def main(trainer_class: type[Trainer]) -> None:
         if config.checkpoint.create_seed_checkpoint:
             assert (
                 int(os.environ["WORLD_SIZE"]) == 1
-            ), "Must create seed checkpoint using a single device"
+            ), "Must create seed checkpoint using a single device, to disable sharding."
             assert (
                 config.checkpoint.enable
-            ), "Must enable checkpointing when creating a seed checkpoint"
+            ), "Must enable checkpointing when creating a seed checkpoint."
             trainer.checkpointer.save(curr_step=0, last_step=True)
             logger.info("Created seed checkpoint")
         else:

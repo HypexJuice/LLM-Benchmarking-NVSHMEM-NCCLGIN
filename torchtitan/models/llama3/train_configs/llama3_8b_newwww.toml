@@ -1,0 +1,57 @@
+# =========================
+# Fair NCCL vs NVSHMEM benchmark config
+# =========================
+
+[job]
+dump_folder = "./outputs/pp4_mb4_bsz4_seq256"
+description = "Llama3-8B PP4 NCCL vs NVSHMEM benchmark"
+
+[profiling]
+enable_profiling = true
+save_traces_folder = "profile_trace"
+profile_freq = 10
+
+[metrics]
+log_freq = 10
+enable_tensorboard = true
+save_tb_folder = "tb"
+
+[model]
+name = "llama3"
+flavor = "8B"
+hf_assets_path = "./assets/hf/Llama-3.1-8B"
+
+[optimizer]
+name = "AdamW"
+lr = 3e-4
+eps = 1e-8
+
+[lr_scheduler]
+warmup_steps = 50
+
+[training]
+local_batch_size = 1        # ↓ key for NVSHMEM memory
+seq_len = 256                 # keep realistic, but safe
+max_norm = 1.0
+steps = 200
+dataset = "c4"
+dtype = "bfloat16"
+
+[parallelism]
+data_parallel_replicate_degree = 1
+data_parallel_shard_degree = -1
+tensor_parallel_degree = 1
+pipeline_parallel_degree = 1
+context_parallel_degree = 1
+
+[checkpoint]
+enable = false
+
+[compile]
+enable = false
+
+[activation_checkpoint]
+mode = "full"
+
+[validation]
+enable = false

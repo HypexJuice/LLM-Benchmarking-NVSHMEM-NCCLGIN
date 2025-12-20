@@ -1,0 +1,16 @@
+[
+    {
+        "backend": "nvshmem",
+        "time_sec": 23.07,
+        "log_file": "logs/benchmark_nvshmem_20251220_033901.log",
+        "nsys_reports": [],
+        "success": false,
+        "error": "    result[f.name] = self._dict_to_dataclass(f.type, value)\n  File \"/pscratch/sd/a/as4455/torchtitan/torchtitan/config/manager.py\", line 167, in _dict_to_dataclass\n    raise ValueError(\n    result[f.name] = self._dict_to_dataclass(f.type, value)\n  File \"/pscratch/sd/a/as4455/torchtitan/torchtitan/config/manager.py\", line 167, in _dict_to_dataclass\nValueError: Invalid field names in <class 'torchtitan.config.job_config.Optimizer'> data: {'cpu_offload', 'fused'}.\nPlease modify your .toml config file or override these fields from the command line.\n",
+        "avg_tokens_per_sec": 0.0,
+        "peak_tokens_per_sec": 0.0,
+        "num_steps_completed": 0,
+        "final_loss": null,
+        "errors": {},
+        "sample_steps": []
+    }
+]

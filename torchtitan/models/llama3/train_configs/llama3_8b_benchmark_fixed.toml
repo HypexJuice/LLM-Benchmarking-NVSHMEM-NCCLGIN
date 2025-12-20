@@ -1,0 +1,71 @@
+# =========================
+# FIXED: NCCL vs NVSHMEM benchmark config
+# Memory-optimized to prevent OOM on A100 40GB
+# =========================
+
+[job]
+dump_folder = "./outputs/pp4_mb4_bsz4_seq128_fixed"
+description = "Llama3-8B NCCL vs NVSHMEM benchmark (OOM fixed)"
+
+[profiling]
+enable_profiling = true
+save_traces_folder = "profile_trace"
+profile_freq = 8
+
+[metrics]
+log_freq = 5
+enable_tensorboard = true
+save_tb_folder = "tb"
+
+[model]
+name = "llama3"
+flavor = "8B"
+hf_assets_path = "./assets/hf/Llama-3.1-8B"
+
+[optimizer]
+name = "AdamW"
+lr = 3e-4
+eps = 1e-8
+; fused = true              # ✅ More memory efficient
+; foreach = true            # ✅ Better batching
+
+[lr_scheduler]
+warmup_steps = 5          # Reduced from 10 for faster testing
+
+[training]
+local_batch_size = 1      
+seq_len = 128              # ✅ REDUCED from 256 to prevent OOM
+max_norm = 1.0
+steps = 10                 # Reduced for faster testing
+dataset = "c4"
+dtype = "bfloat16"
+; gradient_accumulation_steps = 1
+
+# ✅ Memory optimization
+gc_freq = 1                # Garbage collect every step
+
+[parallelism]
+data_parallel_replicate_degree = 1
+data_parallel_shard_degree = -1
+tensor_parallel_degree = 1
+pipeline_parallel_degree = 1
+context_parallel_degree = 1
+
+[checkpoint]
+enable = false
+
+[compile]
+enable = false             # Keep disabled to reduce memory
+
+[activation_checkpoint]
+mode = "full"              # ✅ CHANGED from "selective" to "full" for more memory savings
+# selective_ac_option = "op"  # Not needed with mode=full
+
+[validation]
+enable = false
+
+# ✅ Additional memory-saving options
+[experimental]
+# If your torchtitan supports these:
+# enable_cpu_offload = true
+# enable_fused_kernels = true

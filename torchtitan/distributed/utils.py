@@ -309,12 +309,12 @@ def init_distributed(
         _ranks=ranks if ranks is not None else [],
     )
 
-    from torchtitan.components.nvshmem_backend import init_nvshmem
-    ok = init_nvshmem(rank=dist.get_rank(), world_size=dist.get_world_size())
-    if ok:
-        logger.info("NVSHMEM initialized successfully")
-    else:
-        logger.warning("NVSHMEM initialization failed or backend not selected; falling back to NCCL")
+    # from torchtitan.components.nvshmem_backend import init_nvshmem
+    # ok = init_nvshmem(rank=dist.get_rank(), world_size=dist.get_world_size())
+    # if ok:
+    #     logger.info("NVSHMEM initialized successfully")
+    # else:
+    #     logger.warning("NVSHMEM initialization failed or backend not selected; falling back to NCCL")
 
 
 def set_pg_timeouts(timeout, world_mesh):
