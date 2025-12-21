@@ -121,6 +121,19 @@ env = os.environ.copy()
 env["PYTHONPATH"] = "/pscratch/sd/a/as4455/torchtitan:" + env.get("PYTHONPATH", "")
 env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512"
 
+env["NSYS_NVSHMEM_TRACE"] = "1"
+# # env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+env["NVSHMEM_NVTX"] = "common"
+env["COMM_BACKEND"] = "nvshmem"
+env["TORCH_SYMMETRIC_MEMORY"] = "nvshmem"
+env["NVSHMEM_DEBUG"] = "INFO"
+env["NVSHMEM_SYMMETRIC_SIZE"] = "1G"
+# # env["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+
+# # ✅ Keep NVTX + CUDA tracing only
+# env["NSYS_NVSHMEM_TRACE"] = "0"
+# env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512"
+# env["MPICH_GPU_SUPPORT_ENABLED"] = "1"
 # Enable profiling (set to False for faster runs without profiling)
 ENABLE_PROFILING = True
 
@@ -180,7 +193,7 @@ def run_benchmark(backend):
     env["COMM_BACKEND"] = backend
     
     # Output paths
-    nsys_out = f"nsys_{backend}_{timestamp}"
+    nsys_out = f"nsysout/nsys_{backend}_{timestamp}"
     log_file = f"logs/bench_{backend}_{timestamp}.log"
     
     os.makedirs("logs", exist_ok=True)

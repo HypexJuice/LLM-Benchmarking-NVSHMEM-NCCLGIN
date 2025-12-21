@@ -50,3 +50,8 @@ Sessionx.vim
 .tar
 
 *.txt
+
+*.nsys-rep
+*.sqlite
+*.json
+*.csv
