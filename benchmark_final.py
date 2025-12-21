@@ -19,8 +19,7 @@ env["NSYS_NVSHMEM_TRACE"] = "1"
 # env["NVSHMEM_NVTX"] = "common"
 # env["COMM_BACKEND"] = "nvshmem"
 # env["TORCH_SYMMETRIC_MEMORY"] = "nvshmem"
-# env["NVSHMEM_DEBUG"] = "INFO"
-# env["NVSHMEM_SYMMETRIC_SIZE"] = "1G"
+# env["NVSHMEM_DEBUG"] = "INFO"nv["NVSHMEM_SYMMETRIC_SIZE"] = "1G"
 
 # Config
 TOML_FILE = "./torchtitan/models/llama3/train_configs/llama3_8bnew.toml"

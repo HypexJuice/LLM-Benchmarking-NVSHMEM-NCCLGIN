@@ -113,8 +113,20 @@ from datetime import datetime
 
 # Config
 TOML_FILE = "./torchtitan/models/llama3/train_configs/llama3_8bnew.toml"
-NUM_GPUS = 4
+NUM_GPUS = 8
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+SLURM_JOB_NUM_NODES = 2
+SLURM_GPUS_PER_NODE = 4
+
+MASTER_ADDR = subprocess.check_output(
+    "scontrol show hostnames $SLURM_NODELIST | head -n 1",
+    shell=True,
+    text=True,
+).strip()
+MASTER_PORT=29500
+
+TRACE_DIR = "./traces"
+nsys_prefix = "llama3"
 
 # Environment
 env = os.environ.copy()
@@ -135,7 +147,7 @@ env["NVSHMEM_SYMMETRIC_SIZE"] = "1G"
 # env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512"
 # env["MPICH_GPU_SUPPORT_ENABLED"] = "1"
 # Enable profiling (set to False for faster runs without profiling)
-ENABLE_PROFILING = True
+ENABLE_PROFILING = False
 
 # Command templates
 if ENABLE_PROFILING:
@@ -173,13 +185,32 @@ if ENABLE_PROFILING:
 
 else:
     # Without profiling - faster
+    # CMD_TEMPLATE = (
+    #     "torchrun "
+    #     "--nproc_per_node={nproc} "
+    #     "--rdzv_backend=c10d "
+    #     "--rdzv_endpoint=localhost:29500 "
+    #     "torchtitan/train.py "
+    #     "--job.config_file {toml}"
+    # )
+
     CMD_TEMPLATE = (
-        "torchrun "
-        "--nproc_per_node={nproc} "
-        "--rdzv_backend=c10d "
-        "--rdzv_endpoint=localhost:29500 "
-        "torchtitan/train.py "
-        "--job.config_file {toml}"
+        """
+        srun  \
+          --nodes=2 \
+            --ntasks-per-node=1 \
+            --gpus-per-node=4 \
+            --gpu-bind=none \
+        --ntasks-per-node=1 \
+		python -m torch.distributed.run \
+		--nnodes={SLURM_JOB_NUM_NODES} \
+		--nproc-per-node={SLURM_GPUS_PER_NODE} \
+		--rdzv-backend=c10d \
+		--rdzv-endpoint={MASTER_ADDR}:{MASTER_PORT} \
+		-m torchtitan.train \
+		--job.config_file "{toml}" \
+		--job.dump_folder "{TRACE_DIR}" \
+        """
     )
 
 
@@ -202,7 +233,14 @@ def run_benchmark(backend):
     cmd = CMD_TEMPLATE.format(
         nproc=NUM_GPUS,
         nsys_out=nsys_out,
-        toml=TOML_FILE
+        toml=TOML_FILE,
+        TRACE_DIR=TRACE_DIR,
+        nsys_prefix=nsys_prefix,
+        timestamp=timestamp,
+        SLURM_JOB_NUM_NODES=SLURM_JOB_NUM_NODES,
+        SLURM_GPUS_PER_NODE=SLURM_GPUS_PER_NODE,
+        MASTER_ADDR=MASTER_ADDR,
+        MASTER_PORT=MASTER_PORT,
     )
     
     print(f"Command: {cmd}")
@@ -280,8 +318,8 @@ def main():
     results = []
     
     # Test NCCL first (baseline)
-    print("\n>>> Running NCCL baseline...")
-    results.append(run_benchmark("nccl"))
+    # print("\n>>> Running NCCL baseline...")
+    # results.append(run_benchmark("nccl"))
     
     # Test NVSHMEM
     print("\n>>> Running NVSHMEM...")
