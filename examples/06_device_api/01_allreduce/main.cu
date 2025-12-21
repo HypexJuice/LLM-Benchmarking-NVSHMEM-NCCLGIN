@@ -13,7 +13,7 @@
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
-
+  
 /*
  * NCCL Device API AllReduce Example
  *
@@ -249,3 +249,6 @@ int main(int argc, char* argv[]) {
   // Run example using the provided utility framework
   return run_example(argc, argv, allReduce);
 }
+
+
+
